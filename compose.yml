@@ -1,0 +1,89 @@
+networks:
+  app-frontend-net:
+    driver: bridge
+  app-backend-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+    driver: local
+
+services:
+
+  adminer:
+    image: adminer:latest
+    container_name: reg-adminer
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8081:8080"
+    networks:
+      - app-backend-net
+    depends_on:
+      database:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: reg-redis
+    restart: unless-stopped
+    networks:
+      - app-backend-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      
+  database:
+    image: postgres:19rc1-trixie
+    container_name: reg-database
+    restart: unless-stopped
+    pull_policy: never
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - app-backend-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: reg-backend
+    restart: unless-stopped
+    environment:
+      DB_HOST: ${DB_HOST}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      REDIS_HOST: redis
+    networks:
+      - app-backend-net
+      - app-frontend-net
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: reg-frontend
+    restart: unless-stopped
+    ports:
+      - "8073:80"
+    networks:
+      - app-frontend-net
+    depends_on:
+      - backend
